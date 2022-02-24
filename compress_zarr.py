@@ -20,11 +20,10 @@ def trunc_filter(bits):
     scale = 1.0 / (2 ** bits)
     return [] if bits == 0 else [ numcodecs.fixedscaleoffset.FixedScaleOffset(offset=0, scale=scale, dtype=np.uint16) ]
 
-def blosc_compressor_lib(trunc_bits, chunk_factor):
+def blosc_compressor_lib(trunc_bits, chunk_factor, threads):
     cnames = [ 'zstd', 'blosclz', 'lz4', 'lz4hc', 'zlib' ]#, 'snappy' ]
     shuffles = [ numcodecs.Blosc.SHUFFLE, numcodecs.Blosc.NOSHUFFLE ]
     clevels = [ 1, 3, 5, 9 ]
-    threads = [4, 8, 16, 32]
 
     opts = []
     for cname, clevel, shuffle, tb, cf, th in itertools.product(cnames, clevels, shuffles, trunc_bits, chunk_factor, threads):
@@ -148,12 +147,12 @@ def lossy_compressor_lib(trunc_bits, chunk_factor):
 
     return compressors
 
-def build_compressors(codecs, trunc_bits, chunk_factor):
+def build_compressors(codecs, trunc_bits, chunk_factor, blosc_threads):
     compressors = []
     if 'other-lossless' in codecs:
         compressors += lossless_compressor_lib(trunc_bits, chunk_factor)
     if 'blosc' in codecs:
-        compressors += blosc_compressor_lib(trunc_bits, chunk_factor)
+        compressors += blosc_compressor_lib(trunc_bits, chunk_factor, blosc_threads)
     if 'lossy' in codecs:
         compressors += lossy_compressor_lib(trunc_bits, chunk_factor)
 
@@ -172,6 +171,7 @@ def main():
     parser.add_argument("-t","--trunc-bits", nargs="+", type=int, default=[0,2,4])
     parser.add_argument("-b", "--block-scale-factor", nargs="+", type=int, default=[1])
     parser.add_argument("-m", "--metrics", nargs="+", type=str, default=[])  # [mse, ssim, psnr]
+    parser.add_argument("-x", "--blosc-threads", nargs="+", type=int, default=[8])
 
     args = parser.parse_args(sys.argv[1:])
 
@@ -180,7 +180,7 @@ def main():
     logging.basicConfig(format='%(asctime)s %(message)s', datefmt="%Y-%m-%d %H:%M")
     logging.getLogger().setLevel(args.log_level)
     
-    compressors = build_compressors(args.codecs, args.trunc_bits, args.block_scale_factor)
+    compressors = build_compressors(args.codecs, args.trunc_bits, args.block_scale_factor, args.blosc_threads)
 
     run(compressors=compressors,
         num_tiles=args.num_tiles,
