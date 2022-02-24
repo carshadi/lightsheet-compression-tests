@@ -336,7 +336,6 @@ def run(compressors, num_tiles, resolution, random_seed, input_file, output_data
                 blosc.use_threads = True
                 blosc.set_nthreads(c['params']['threads'])
                 tile_metrics['threads'] = blosc.get_nthreads()
-                logging.info(f"using {c['name']} with {blosc.get_nthreads()} threads")
 
             metrics = compress_write(data, compressor, filters, chunk_factor, quality_metrics, output_data_file)
 
