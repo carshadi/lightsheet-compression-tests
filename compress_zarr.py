@@ -3,6 +3,7 @@ import random
 import math
 import zarr
 import numcodecs
+from numcodecs import blosc
 import argparse
 import os
 import sys
@@ -22,10 +23,11 @@ def trunc_filter(bits):
 def blosc_compressor_lib(trunc_bits, chunk_factor):
     cnames = [ 'zstd', 'blosclz', 'lz4', 'lz4hc', 'zlib' ]#, 'snappy' ]
     shuffles = [ numcodecs.Blosc.SHUFFLE, numcodecs.Blosc.NOSHUFFLE ]
-    clevels = [ 1, 3, 5, 7, 9 ]
+    clevels = [ 1, 3, 5, 9 ]
+    threads = [4, 8, 16, 32]
 
     opts = []
-    for cname, clevel, shuffle, tb, cf in itertools.product(cnames, clevels, shuffles, trunc_bits, chunk_factor):
+    for cname, clevel, shuffle, tb, cf, th in itertools.product(cnames, clevels, shuffles, trunc_bits, chunk_factor, threads):
         opts.append({
             'name': f'blosc-{cname}',
             'compressor': numcodecs.Blosc(cname=cname, clevel=clevel, shuffle=shuffle),
@@ -34,7 +36,8 @@ def blosc_compressor_lib(trunc_bits, chunk_factor):
                 'shuffle': shuffle,
                 'level': clevel,
                 'trunc': tb,
-                "chunk_factor": cf
+                "chunk_factor": cf,
+                "threads": th
             }
         })
 
@@ -328,6 +331,12 @@ def run(compressors, num_tiles, resolution, random_seed, input_file, output_data
 
             logging.info(f"starting test {len(all_metrics)+1}/{total_tests}")
             logging.info(f"compressor: {c['name']} params: {c['params']}")
+
+            if "blosc" in c['name']:
+                blosc.use_threads = True
+                blosc.set_nthreads(c['params']['threads'])
+                tile_metrics['threads'] = blosc.get_nthreads()
+                logging.info(f"using {c['name']} with {blosc.get_nthreads()} threads")
 
             metrics = compress_write(data, compressor, filters, chunk_factor, quality_metrics, output_data_file)
 
