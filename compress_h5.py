@@ -1,3 +1,5 @@
+import os.path
+
 from PyImarisWriter import PyImarisWriter as PW
 import numpy as np
 from datetime import datetime
@@ -31,7 +33,7 @@ def get_test_configurations():
     
     configurations = []
     
-    configurations.append(TestConfiguration(len(configurations), 'compression_gzip_level1', np.uint16, 'uint16', PW.eCompressionAlgorithmGzipLevel1,
+    configurations.append(TestConfiguration(len(configurations), 'compression_gzip_level9', np.uint16, 'uint16', PW.eCompressionAlgorithmGzipLevel1,
                                             [PW.Color(0, 1, 1, 1), PW.Color(1, 0, 1, 1), PW.Color(1, 1, 0, 1)]))
     
     configurations.append(TestConfiguration(len(configurations), 'compression_lz4', np.uint16, 'uint16', PW.eCompressionAlgorithmLZ4,
@@ -94,25 +96,52 @@ def run(configuration, np_data, cores):
     color_infos[0].set_color_table(configuration.mColor_table) 
     converter.Finish(image_extents, parameters, time_infos, color_infos, adjust_color_range)
     converter.Destroy()
-    
-    print('{} MB/sec/core'.format(image_size.x*image_size.y*image_size.z*image_size.c*image_size.t*2/1e6/(time.time()-start_time)/options.mNumberOfThreads))
+
+    in_bytes = image_size.x * image_size.y * image_size.z * image_size.c * image_size.t * 2
+    out_bytes = os.path.getsize(output_filename)
+    ratio = in_bytes / out_bytes
+
+    compress_time = time.time() - start_time
+    compress_bps = in_bytes / compress_time
+
+    print(f"Storage ratio: {ratio}")
+    print(f"Compress MiB/s {compress_bps / 2**20}")
+    print('{} MB/sec/core'.format(in_bytes/1e6/compress_time/options.mNumberOfThreads))
     print('Wrote {} to {}'.format(configuration.mTitle, output_filename))
+
+    return compress_bps, ratio
 
 def main():
 
     camX = 2048
     camY = 2048
-    nFrames = 1000
+    nFrames = 64
     nCores = 4
 
-    np_data = np.random.poisson(size = (camX, camY, nFrames))
-    np_data = np_data/np.max(np_data[:])*1000
+    # np_data = np.random.poisson(size = (camX, camY, nFrames))
+    # np_data = np_data/np.max(np_data[:])*1000
 
     configurations = get_test_configurations()
 
-    for test_config in configurations:
-        run(test_config, np_data.astype(test_config.mNp_type), nCores)
+    filepath = r"Y:\allen\scratch\aindtemp\data\anatomy\exm-hemi-brain.zarr"
+    res = 1
+    import compress_zarr
+    import random
+    random.seed(42)
+    num_tiles = 10
+    speed = []
+    ratios = []
+    for i in range(num_tiles):
+        print(f"Running test {i+1} out of {num_tiles}")
+        np_data, rslice, __ = compress_zarr.read_random_chunk(filepath, res)
+        print(rslice)
+        for test_config in configurations:
+            bps, ratio = run(test_config, np_data.astype(test_config.mNp_type), nCores)
+            speed.append(bps)
+            ratios.append(ratio)
+    print(f"Average speed MiB/s: {sum(speed) / len(speed) / 2**20}")
+    print(f"Average ratio: {sum(ratios) / len(ratios)}")
+
 
 if __name__ == "__main__":
-
     main()
