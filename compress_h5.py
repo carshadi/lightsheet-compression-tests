@@ -1,5 +1,8 @@
 import os.path
 
+import pandas as pd
+import psutil
+
 from PyImarisWriter import PyImarisWriter as PW
 import numpy as np
 from datetime import datetime
@@ -33,8 +36,26 @@ def get_test_configurations():
     
     configurations = []
     
-    configurations.append(TestConfiguration(len(configurations), 'compression_gzip_level9', np.uint16, 'uint16', PW.eCompressionAlgorithmGzipLevel1,
+    configurations.append(TestConfiguration(len(configurations), 'compression_gzip_level1', np.uint16, 'uint16', PW.eCompressionAlgorithmGzipLevel1,
                                             [PW.Color(0, 1, 1, 1), PW.Color(1, 0, 1, 1), PW.Color(1, 1, 0, 1)]))
+
+    # configurations.append(TestConfiguration(len(configurations), 'compression_gzip_level9', np.uint16, 'uint16', PW.eCompressionAlgorithmGzipLevel9,
+    #                                         [PW.Color(0, 1, 1, 1), PW.Color(1, 0, 1, 1), PW.Color(1, 1, 0, 1)]))
+
+    # configurations.append(TestConfiguration(len(configurations), 'compression_gzip_level3', np.uint16, 'uint16', PW.eCompressionAlgorithmGzipLevel3,
+    #                                         [PW.Color(0, 1, 1, 1), PW.Color(1, 0, 1, 1), PW.Color(1, 1, 0, 1)]))
+    #
+    # configurations.append(TestConfiguration(len(configurations), 'compression_gzip_level5', np.uint16, 'uint16', PW.eCompressionAlgorithmGzipLevel5,
+    #                                         [PW.Color(0, 1, 1, 1), PW.Color(1, 0, 1, 1), PW.Color(1, 1, 0, 1)]))
+    #
+    # configurations.append(TestConfiguration(len(configurations), 'compression_gzip_level9', np.uint16, 'uint16', PW.eCompressionAlgorithmGzipLevel9,
+    #                                         [PW.Color(0, 1, 1, 1), PW.Color(1, 0, 1, 1), PW.Color(1, 1, 0, 1)]))
+
+    # configurations.append(TestConfiguration(len(configurations), 'compression_gzip_shuffle_level1', np.uint16, 'uint16', PW.eCompressionAlgorithmShuffleGzipLevel1,
+    #                                         [PW.Color(0, 1, 1, 1), PW.Color(1, 0, 1, 1), PW.Color(1, 1, 0, 1)]))
+
+    # configurations.append(TestConfiguration(len(configurations), 'compression_gzip_shuffle_level9', np.uint16, 'uint16', PW.eCompressionAlgorithmShuffleGzipLevel9,
+    #                                         [PW.Color(0, 1, 1, 1), PW.Color(1, 0, 1, 1), PW.Color(1, 1, 0, 1)]))
     
     configurations.append(TestConfiguration(len(configurations), 'compression_lz4', np.uint16, 'uint16', PW.eCompressionAlgorithmLZ4,
                                             [PW.Color(0, 1, 1, 1), PW.Color(1, 0, 1, 1), PW.Color(1, 1, 0, 1)]))
@@ -73,6 +94,7 @@ def run(configuration, np_data, cores):
 
     start_time = time.time()
 
+    psutil.cpu_percent(interval=None)
     block_index = PW.ImageSize()
     for c in range(num_blocks.c):
         block_index.c = c
@@ -97,6 +119,8 @@ def run(configuration, np_data, cores):
     converter.Finish(image_extents, parameters, time_infos, color_infos, adjust_color_range)
     converter.Destroy()
 
+    cpu_utilization = psutil.cpu_percent(interval=None)
+
     in_bytes = image_size.x * image_size.y * image_size.z * image_size.c * image_size.t * 2
     out_bytes = os.path.getsize(output_filename)
     ratio = in_bytes / out_bytes
@@ -109,13 +133,13 @@ def run(configuration, np_data, cores):
     print('{} MB/sec/core'.format(in_bytes/1e6/compress_time/options.mNumberOfThreads))
     print('Wrote {} to {}'.format(configuration.mTitle, output_filename))
 
-    return compress_bps, ratio
+    return out_bytes, compress_time, cpu_utilization
 
 def main():
 
-    camX = 2048
-    camY = 2048
-    nFrames = 64
+    # camX = 2048
+    # camY = 2048
+    # nFrames = 128
     nCores = 4
 
     # np_data = np.random.poisson(size = (camX, camY, nFrames))
@@ -125,22 +149,39 @@ def main():
 
     filepath = r"Y:\allen\scratch\aindtemp\data\anatomy\exm-hemi-brain.zarr"
     res = 1
+
     import compress_zarr
     import random
+
     random.seed(42)
     num_tiles = 10
-    speed = []
-    ratios = []
+
+    all_metrics = []
     for i in range(num_tiles):
         print(f"Running test {i+1} out of {num_tiles}")
-        np_data, rslice, __ = compress_zarr.read_random_chunk(filepath, res)
-        print(rslice)
+        np_data, rslice, read_time = compress_zarr.read_random_chunk(filepath, res)
         for test_config in configurations:
-            bps, ratio = run(test_config, np_data.astype(test_config.mNp_type), nCores)
-            speed.append(bps)
-            ratios.append(ratio)
-    print(f"Average speed MiB/s: {sum(speed) / len(speed) / 2**20}")
-    print(f"Average ratio: {sum(ratios) / len(ratios)}")
+            tile_metrics = {
+                'compressor_name': test_config.mTitle,
+                'tile': rslice,
+                'bytes_read': np_data.nbytes,
+                'read_time': read_time
+            }
+
+            bytes_written, compress_time, cpu_utilization = run(test_config, np_data.astype(test_config.mNp_type), nCores)
+
+            tile_metrics['bytes_written'] = bytes_written
+            tile_metrics['compress_time'] = compress_time
+            # tile_metrics['cpu_utilization'] = cpu_utilization
+            tile_metrics['storage_ratio'] = np_data.nbytes / bytes_written
+            tile_metrics['compress_bps'] = np_data.nbytes / compress_time
+
+            all_metrics.append(tile_metrics)
+
+    # output_metrics_file = output_metrics_file.replace('.csv', '_' + os.path.basename(input_file) + '.csv')
+
+    df = pd.DataFrame.from_records(all_metrics)
+    df.to_csv("./h5-compression-metrics-exm-hemi-brain.csv", index_label='test_number')
 
 
 if __name__ == "__main__":
